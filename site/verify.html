@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Verificación de Diploma - Ilustre Colegio Nacional de Peritos</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
+    .card { max-width: 900px; margin: 0 auto; border: 1px solid #e5e7eb; border-radius: 12px; padding: 24px; box-shadow: 0 1px 4px rgba(0,0,0,.05); }
+    h1 { font-size: 22px; margin: 0 0 12px; }
+    .ok { color: #065f46; background: #ecfdf5; padding: 8px 12px; border-radius: 8px; display: inline-block; }
+    .bad { color: #7f1d1d; background: #fef2f2; padding: 8px 12px; border-radius: 8px; display: inline-block; }
+    .row { margin-top: 16px; }
+    .label { color: #6b7280; font-size: 13px; }
+    .val { font-weight: 600; }
+    img { max-width: 100%; height: auto; border: 1px solid #e5e7eb; border-radius: 8px; }
+    .muted { color: #6b7280; font-size: 12px; }
+    .footer { margin-top: 24px; color: #6b7280; font-size: 12px; }
+    .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; background: #f3f4f6; padding: 4px 6px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Verificación de Diploma</h1>
+    <div id="status" class="muted">Cargando...</div>
+    <div id="details" class="row"></div>
+    <div class="footer">© Ilustre Colegio Nacional de Peritos</div>
+  </div>
+
+<script>
+function getParam(name) {
+  return new URLSearchParams(window.location.search).get(name);
+}
+
+async function pemToCryptoKey(pem) {
+  const b64 = pem.replace(/-----(BEGIN|END)[\w\s]+-----/g,'').replace(/\s+/g,'');
+  const bin = Uint8Array.from(atob(b64), c=>c.charCodeAt(0));
+  return await crypto.subtle.importKey(
+    "spki",
+    bin.buffer,
+    { name: "RSA-PSS", hash: "SHA-256" },
+    true,
+    ["verify"]
+  );
+}
+
+function b64urlToBytes(b64url){
+  const pad = '='.repeat((4 - (b64url.length % 4)) % 4);
+  const b64 = b64url.replace(/-/g,'+').replace(/_/g,'/') + pad;
+  const bin = atob(b64);
+  return Uint8Array.from(bin, c => c.charCodeAt(0));
+}
+
+(async ()=>{
+  const status = document.getElementById('status');
+  const details = document.getElementById('details');
+
+  const id = getParam('id');
+  if(!id){ status.innerHTML = '<span class="bad">URL inválida: falta el parámetro <span class="code">id</span>.</span>'; return; }
+
+  try{
+    // 1) Cargar registro
+    const resp = await fetch(`records/${id}.json`, {cache: 'no-store'});
+    if(!resp.ok){ status.innerHTML = '<span class="bad">Registro no encontrado.</span>'; return; }
+    const rec = await resp.json();
+
+    // 2) Cargar clave pública
+    const pemResp = await fetch('public.pem', {cache: 'no-store'});
+    if(!pemResp.ok){ status.innerHTML = '<span class="bad">No se encontró la clave pública (<span class="code">public.pem</span>).</span>'; return; }
+    const publicPem = await pemResp.text();
+    const pubKey = await pemToCryptoKey(publicPem);
+
+    // 3) Preparar payload
+    const payload = JSON.stringify({
+      id: rec.datos.id,
+      nombre: rec.datos.nombre,
+      curso: rec.datos.curso,
+      folio: rec.datos.folio,
+      fecha: rec.datos.fecha
+    });
+
+    // 4) Verificar firma
+    const enc = new TextEncoder();
+    const ok = await crypto.subtle.verify(
+      { name: "RSA-PSS", saltLength: 32 },
+      pubKey,
+      b64urlToBytes(rec.signature),
+      enc.encode(payload)
+    );
+
+    if(ok){
+      status.innerHTML = '<span class="ok">Diploma AUTÉNTICO</span>';
+      details.innerHTML = `
+        <div class="row"><span class="label">ID:</span> <span class="val">${rec.datos.id}</span></div>
+        <div class="row"><span class="label">Nombre:</span> <span class="val">${rec.datos.nombre}</span></div>
+        <div class="row"><span class="label">Curso:</span> <span class="val">${rec.datos.curso}</span></div>
+        <div class="row"><span class="label">Folio:</span> <span class="val">${rec.datos.folio}</span></div>
+        <div class="row"><span class="label">Fecha:</span> <span class="val">${rec.datos.fecha}</span></div>
+        <div class="row"><img src="images/${rec.datos.id}.png" alt="Imagen del diploma"></div>
+        <div class="row muted">Si los datos no coinciden con el documento físico, contacte al Colegio.</div>
+      `;
+    } else {
+      status.innerHTML = '<span class="bad">NO AUTÉNTICO</span>';
+      details.innerHTML = '<div class="row">La firma digital no coincide con los datos publicados.</div>';
+    }
+  }catch(e){
+    status.innerHTML = '<span class="bad">Error: '+e+'</span>';
+  }
+})();
+</script>
+</body>
+</html>
