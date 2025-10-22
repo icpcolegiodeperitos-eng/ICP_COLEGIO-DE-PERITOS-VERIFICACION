@@ -1,1 +1,1 @@
-Sitio de verificación de diplomas del Ilustre Colegio Nacional de Peritos.
+Sitio de verificación de DOCUMENTOS OFICIALES del Ilustre Colegio Nacional de Peritos.
